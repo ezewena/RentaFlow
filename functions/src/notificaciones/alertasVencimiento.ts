@@ -4,6 +4,37 @@ import * as admin from 'firebase-admin'
 // Días de anticipación en los que se avisa sobre el vencimiento del contrato
 const DIAS_ALERTA_CONTRATO = [60, 30, 20, 10, 3]
 
+// Días antes del ajuste en que se avisa al agente (y se activa el botón en la UI)
+const DIAS_ALERTA_AJUSTE = 15
+
+/**
+ * Calcula la próxima fecha de actualización de alquiler de forma dinámica,
+ * sin depender del campo `proximaFecha` almacenado (que sólo refleja la primera).
+ *
+ * Devuelve el primer día del mes en que caerá el próximo ajuste.
+ */
+function calcularProximaFechaAjuste(fechaInicio: string, periodoMeses: number): string {
+  const [y, m] = fechaInicio.split('-').map(Number)
+  const hoy = new Date()
+  hoy.setHours(0, 0, 0, 0)
+
+  // Primera fecha de ajuste: fechaInicio + periodoMeses
+  let fechaAjuste = new Date(y, m - 1 + periodoMeses, 1)
+
+  // Avanzar hasta que sea futura
+  while (fechaAjuste <= hoy) {
+    fechaAjuste = new Date(
+      fechaAjuste.getFullYear(),
+      fechaAjuste.getMonth() + periodoMeses,
+      1,
+    )
+  }
+
+  const ay = fechaAjuste.getFullYear()
+  const am = String(fechaAjuste.getMonth() + 1).padStart(2, '0')
+  return `${ay}-${am}-01`
+}
+
 function buildTransporter() {
   return nodemailer.createTransport({
     service: 'gmail',
@@ -22,13 +53,6 @@ function formatFecha(iso: string) {
 
 function formatMonto(n: number) {
   return n.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 })
-}
-
-// Suma N días a una fecha ISO y devuelve el resultado como YYYY-MM-DD
-function addDays(iso: string, days: number): string {
-  const d = new Date(iso)
-  d.setDate(d.getDate() + days)
-  return d.toISOString().split('T')[0]
 }
 
 // Devuelve YYYY-MM-DD de hoy en hora local argentina (UTC-3)
@@ -380,13 +404,16 @@ export async function ejecutarAlertasDiarias() {
       vencimientos[agentId].push({ propiedadNombre: nombre, inquilino, monto, diasRestantes: diffDias })
     }
 
-    // ── Alerta actualización: próxima en 15 días o menos ──
+    // ── Alerta actualización: próxima en DIAS_ALERTA_AJUSTE días o menos ──
+    // Se calcula dinámicamente para funcionar más allá del primer período.
     const act = p.contrato?.actualizacion
-    if (act?.proximaFecha && act.indice !== 'ninguno') {
+    const fechaInicio: string = p.contrato?.fechaInicio ?? ''
+    if (act && act.indice !== 'ninguno' && act.indice !== 'manual' && fechaInicio) {
+      const proximaFechaAjuste = calcularProximaFechaAjuste(fechaInicio, act.periodoMeses)
       const diffAct = Math.round(
-        (new Date(act.proximaFecha).getTime() - new Date(hoy).getTime()) / 86400000,
+        (new Date(proximaFechaAjuste).getTime() - new Date(hoy).getTime()) / 86400000,
       )
-      if (diffAct >= 0 && diffAct <= 15) {
+      if (diffAct >= 0 && diffAct <= DIAS_ALERTA_AJUSTE) {
         if (!actualizaciones[agentId]) actualizaciones[agentId] = []
         actualizaciones[agentId].push({
           propiedadNombre: nombre,
@@ -394,7 +421,7 @@ export async function ejecutarAlertasDiarias() {
           monto,
           indice: act.indice,
           diasRestantes: diffAct,
-          proximaFecha: act.proximaFecha,
+          proximaFecha: proximaFechaAjuste,
         })
       }
     }

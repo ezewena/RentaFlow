@@ -18,10 +18,18 @@ import {
 } from '@/shared/lib/calculadorAlquiler'
 import toast from 'react-hot-toast'
 
+export interface ProximoAumento {
+  mesDesde: string      // YYYY-MM — primer mes del período de ajuste
+  monto: number         // nuevo monto proyectado
+  variacion: number     // % de variación
+  estimado: boolean
+}
+
 interface Props {
   propiedad: Propiedad
   onPagoRegistrado: (p: Propiedad) => void
   onMontoActualCambiado?: (monto: number) => void
+  onProximoAumento?: (info: ProximoAumento | null) => void
 }
 
 function mesesDesdeInicio(fechaInicio: string): string[] {
@@ -45,7 +53,7 @@ function labelMes(mes: string): string {
   return new Date(y, m - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })
 }
 
-export function PagosMensuales({ propiedad, onPagoRegistrado, onMontoActualCambiado }: Props) {
+export function PagosMensuales({ propiedad, onPagoRegistrado, onMontoActualCambiado, onProximoAumento }: Props) {
   const [guardando,    setGuardando]    = useState<string | null>(null)
   const [datosIndices, setDatosIndices] = useState<DatosIndices>({})
   const [indiceError,  setIndiceError]  = useState(false)
@@ -88,6 +96,17 @@ export function PagosMensuales({ propiedad, onPagoRegistrado, onMontoActualCambi
       onMontoActualCambiado?.(montoHoy)
     }
   }, [montoHoy, periodos.length, onMontoActualCambiado])
+
+  // ── Notificar al padre sobre el próximo período de ajuste ─────────────────
+  useEffect(() => {
+    if (periodos.length === 0) return
+    const proximo = periodos.find((p) => p.numero > 1 && p.mesDesde > mesHoy) ?? null
+    onProximoAumento?.(
+      proximo
+        ? { mesDesde: proximo.mesDesde, monto: proximo.monto, variacion: proximo.variacion, estimado: proximo.estimado }
+        : null,
+    )
+  }, [periodos, mesHoy, onProximoAumento])
 
   // ── Monto ajustado para un mes ─────────────────────────────────────────────
   const montoParaMes = (mes: string): number => {

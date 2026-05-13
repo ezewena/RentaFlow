@@ -13,13 +13,16 @@ import {
   DollarSign,
   MessageCircle,
   Bell,
+  TrendingUp,
 } from 'lucide-react'
 import { getPropiedad, deletePropiedad, updateServicioEstado } from '@/features/propiedades/services/propiedadesService'
 import { ServicioCard } from '@/features/servicios/components/ServicioCard'
-import { PagosMensuales } from '@/features/propiedades/components/PagosMensuales'
+import { PagosMensuales, ProximoAumento } from '@/features/propiedades/components/PagosMensuales'
 import { NotasPropiedad } from '@/features/propiedades/components/NotasPropiedad'
 import { ContratoEstadoBadge } from '@/shared/components/Badge'
 import { formatCurrency, formatDate, daysUntil, calcularDeudaActual } from '@/shared/lib/utils'
+import { ymToLabel } from '@/shared/lib/calculadorAlquiler'
+import { cn } from '@/shared/lib/utils'
 import { Propiedad, EstadoServicio } from '@/shared/lib/types'
 import { SERVICIOS_POR_PROVINCIA, getServicioConfig, getNumeroCliente, getMendozaImpuestoConfig } from '@/shared/lib/provinciaServicios'
 import { usePropiedadesStore } from '@/app/store/propiedadesStore'
@@ -34,6 +37,7 @@ export function PropiedadDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [actualizando, setActualizando] = useState<string | null>(null)
   const [montoAjustado, setMontoAjustado] = useState<number | undefined>(undefined)
+  const [proximoAumento, setProximoAumento] = useState<ProximoAumento | null>(null)
   const { removePropiedad } = usePropiedadesStore()
 
   useEffect(() => {
@@ -112,6 +116,21 @@ export function PropiedadDetailPage() {
   const diasRestantes = daysUntil(propiedad.contrato.fechaFin)
   const deuda = calcularDeudaActual(propiedad, montoAjustado)
 
+  // ── Próximo aumento: info para notificar al inquilino ─────────────────────
+  const indice = propiedad.contrato.actualizacion?.indice
+  const hayIndiceAutomatico = !!indice && indice !== 'ninguno' && indice !== 'manual'
+
+  // Días hasta el próximo período de ajuste
+  const diasHastaAumento = proximoAumento
+    ? Math.round(
+        (new Date(proximoAumento.mesDesde + '-01').getTime() - new Date().setHours(0,0,0,0)) / 86400000,
+      )
+    : null
+
+  // Teléfono del inquilino en formato internacional
+  const telefonoRaw = propiedad.inquilino.telefono.replace(/\D/g, '')
+  const telefonoWA = telefonoRaw.startsWith('54') ? telefonoRaw : `549${telefonoRaw.replace(/^0/, '')}`
+
   // Servicios guardados en el documento que tienen número de cliente
   const serviciosGuardados = Object.entries(propiedad.servicios).filter(
     ([, s]) => getNumeroCliente(s as unknown as Record<string, unknown>),
@@ -137,10 +156,25 @@ export function PropiedadDetailPage() {
     ({ estado }) => (estado.ultimoEstado as string) === 'deuda',
   )
 
-  // Teléfono en formato internacional (Argentina: +54 9 XXX)
-  const telefonoRaw = propiedad.inquilino.telefono.replace(/\D/g, '')
-  const telefonoWA =
-    telefonoRaw.startsWith('54') ? telefonoRaw : `549${telefonoRaw.replace(/^0/, '')}`
+  // ── Mensajes para notificar aumento al inquilino ──────────────────────────
+  const indiceLabel: Record<string, string> = {
+    ICL: 'ICL (Índice Contratos de Locación — BCRA)',
+    IPC: 'IPC (Índice de Precios al Consumidor — INDEC)',
+    CVS: 'CVS (Coeficiente de Variación Salarial — INDEC)',
+  }
+  const mensajeAumentoWA = proximoAumento
+    ? encodeURIComponent(
+        `Hola ${propiedad.inquilino.nombre}, te informamos que a partir de ${ymToLabel(proximoAumento.mesDesde)} el alquiler del inmueble en ${propiedad.direccion} será actualizado según el ${indiceLabel[indice ?? ''] ?? indice}.\n\nNuevo monto estimado: ${formatCurrency(proximoAumento.monto, propiedad.contrato.moneda)}${proximoAumento.estimado ? ' (estimado)' : ''}.\n\nEl ajuste corresponde al período contractual acordado. Ante cualquier consulta, estamos a disposición.\n¡Gracias!`,
+      )
+    : ''
+  const asuntoAumentoEmail = proximoAumento
+    ? encodeURIComponent(`Actualización de alquiler — ${propiedad.direccion}`)
+    : ''
+  const cuerpoAumentoEmail = proximoAumento
+    ? encodeURIComponent(
+        `Hola ${propiedad.inquilino.nombre},\n\nTe informamos que a partir de ${ymToLabel(proximoAumento.mesDesde)}, el alquiler del inmueble ubicado en ${propiedad.direccion} será actualizado de acuerdo al índice ${indiceLabel[indice ?? ''] ?? indice}, según lo estipulado en el contrato.\n\nNuevo monto estimado: ${formatCurrency(proximoAumento.monto, propiedad.contrato.moneda)}${proximoAumento.estimado ? ' (valor estimado, sujeto a publicación oficial del índice)' : ''}.\n\nAnte cualquier consulta, no dudes en contactarnos.\n\n¡Gracias!`,
+      )
+    : ''
 
   const serviciosDeudaLabels = serviciosConDeuda.map((s) => `• ${s.cfg.label}`).join('\n')
   const mensajeWA = encodeURIComponent(
@@ -253,6 +287,7 @@ export function PropiedadDetailPage() {
             propiedad={propiedad}
             onPagoRegistrado={setPropiedad}
             onMontoActualCambiado={setMontoAjustado}
+            onProximoAumento={setProximoAumento}
           />
 
           {/* Contrato */}
@@ -329,6 +364,82 @@ export function PropiedadDetailPage() {
                 actualizando={actualizando === key}
               />
             ))
+          )}
+
+          {/* ── Próximo aumento de alquiler ── */}
+          {hayIndiceAutomatico && proximoAumento && (
+            <div className={cn(
+              'rounded-xl p-4 space-y-3 border',
+              diasHastaAumento !== null && diasHastaAumento <= 15
+                ? 'bg-purple-50 border-purple-200'
+                : 'bg-gray-50 border-gray-200',
+            )}>
+              <div className="flex items-center gap-2">
+                <TrendingUp className={cn(
+                  'w-4 h-4 flex-shrink-0',
+                  diasHastaAumento !== null && diasHastaAumento <= 15 ? 'text-purple-600' : 'text-gray-500',
+                )} />
+                <p className={cn(
+                  'text-sm font-semibold',
+                  diasHastaAumento !== null && diasHastaAumento <= 15 ? 'text-purple-800' : 'text-gray-700',
+                )}>
+                  Próximo aumento de alquiler
+                </p>
+                {diasHastaAumento !== null && diasHastaAumento <= 15 && (
+                  <span className="ml-auto text-xs font-bold text-purple-700 bg-purple-100 px-2 py-0.5 rounded-full">
+                    en {diasHastaAumento} día{diasHastaAumento !== 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+
+              <div className="text-xs space-y-1">
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Fecha</span>
+                  <span className="font-medium text-gray-800">{ymToLabel(proximoAumento.mesDesde)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Índice</span>
+                  <span className="font-semibold text-purple-700">{indice}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-500">Variación est.</span>
+                  <span className={cn('font-semibold', proximoAumento.estimado ? 'text-amber-600' : 'text-green-700')}>
+                    +{proximoAumento.variacion.toFixed(1)}%{proximoAumento.estimado ? ' ~' : ''}
+                  </span>
+                </div>
+                <div className="flex justify-between border-t border-gray-200 pt-1 mt-1">
+                  <span className="text-gray-500">Nuevo monto</span>
+                  <span className="font-bold text-gray-900">
+                    {formatCurrency(proximoAumento.monto, propiedad.contrato.moneda)}
+                  </span>
+                </div>
+              </div>
+
+              <p className={cn(
+                'text-xs',
+                diasHastaAumento !== null && diasHastaAumento <= 15 ? 'text-purple-700' : 'text-gray-500',
+              )}>
+                Notificá al inquilino sobre el próximo ajuste:
+              </p>
+              <div className="flex flex-col gap-2">
+                <a
+                  href={`https://wa.me/${telefonoWA}?text=${mensajeAumentoWA}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-xs font-medium transition-colors"
+                >
+                  <MessageCircle className="w-3.5 h-3.5" />
+                  Notificar por WhatsApp
+                </a>
+                <a
+                  href={`mailto:${propiedad.inquilino.email}?subject=${asuntoAumentoEmail}&body=${cuerpoAumentoEmail}`}
+                  className="flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 text-xs font-medium transition-colors"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  Notificar por Email
+                </a>
+              </div>
+            </div>
           )}
 
           {/* Notificar al inquilino — aparece cuando hay al menos un servicio con deuda */}
