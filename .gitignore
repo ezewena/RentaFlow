@@ -1,0 +1,26 @@
+# Dependencies
+node_modules
+functions/node_modules
+
+# Build
+dist
+functions/lib
+
+# Environment
+.env.local
+.env.*.local
+
+# Editor
+.vscode
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Firebase
+.firebase
+firebase-debug.log
+firestore-debug.log
+ui-debug.log

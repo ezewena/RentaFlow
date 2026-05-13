@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helper ────────────────────────────────────────────────────────────────
+    // Reemplazá ADMIN_UID_PLACEHOLDER con tu UID real (ver instrucciones en README)
+    function isAdmin() {
+      return request.auth != null
+          && request.auth.uid == 'Vpmv6Sg78oWDrvHzgvnCcFRFs8X2';
+    }
+
+    // ── Propiedades ───────────────────────────────────────────────────────────
+    match /propiedades/{propId} {
+      allow read, update, delete: if request.auth != null
+        && request.auth.uid == resource.data.agentId;
+      allow create: if request.auth != null
+        && request.resource.data.agentId == request.auth.uid;
+
+      match /notas/{notaId} {
+        allow read, delete: if request.auth != null
+          && request.auth.uid == resource.data.agentId;
+        allow create: if request.auth != null
+          && request.resource.data.agentId == request.auth.uid;
+      }
+    }
+
+    // ── Usuarios ──────────────────────────────────────────────────────────────
+    // Cada usuario puede leer/escribir su propio doc (FCM token, etc.)
+    // El admin puede leer y escribir cualquier usuario (para aprobar/rechazar)
+    match /usuarios/{uid} {
+      allow read, write: if request.auth != null
+        && (request.auth.uid == uid || isAdmin());
+    }
+
+    match /debug_test/{id} {
+      allow create: if request.auth != null;
+    }
+  }
+}
